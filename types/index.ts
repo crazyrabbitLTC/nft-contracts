@@ -2,4 +2,6 @@ import { SignerWithAddress } from "@nomiclabs/hardhat-ethers/dist/src/signer-wit
 
 export interface Signers {
   admin: SignerWithAddress;
+  userA: SignerWithAddress;
+  userB: SignerWithAddress;
 }

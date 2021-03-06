@@ -14,10 +14,13 @@ describe("Unit tests", function () {
 
     const signers: SignerWithAddress[] = await hre.ethers.getSigners();
     this.signers.admin = signers[0];
+    this.signers.userA = signers[1];
+    this.signers.userB = signers[2]
   });
 
   describe("Greeter", function () {
     beforeEach(async function () {
+      const baseURI = ""
       const greeting: string = "Hello, world!";
       const greeterArtifact: Artifact = await hre.artifacts.readArtifact("Greeter");
       this.greeter = <Greeter>await deployContract(this.signers.admin, greeterArtifact, [greeting]);
