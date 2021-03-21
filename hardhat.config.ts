@@ -10,7 +10,8 @@ import "./tasks/clean";
 import "@nomiclabs/hardhat-waffle";
 import "hardhat-typechain";
 import "solidity-coverage";
-import "hardhat-gas-reporter"
+import "hardhat-gas-reporter";
+import "@nomiclabs/hardhat-etherscan";
 
 const chainIds = {
   ganache: 1337,
@@ -79,6 +80,11 @@ const config: HardhatUserConfig = {
     cache: "./cache",
     sources: "./contracts",
     tests: "./test",
+  },
+  etherscan: {
+    // Your API key for Etherscan
+    // Obtain one at https://etherscan.io/
+    apiKey: "RWNVM4YY577I58CZHRDUSKZJ4CVW3S31YM"
   },
   solidity: {
     version: "0.7.4",

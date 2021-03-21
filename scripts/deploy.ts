@@ -34,16 +34,6 @@ async function main(): Promise<void> {
 
   const baseURI = "www.dennisonbertram.com";
   const maxTokenCount = 20000;
-  const paymentSteps = [
-    ethers.utils.parseUnits("0.1", 18),
-    ethers.utils.parseUnits("0.3", 18),
-    ethers.utils.parseUnits("0.5", 18),
-    ethers.utils.parseUnits("0.9", 18),
-    ethers.utils.parseUnits("1.7", 18),
-    ethers.utils.parseUnits("3", 18),
-    ethers.utils.parseUnits("5", 18),
-    ethers.utils.parseUnits("100", 18),
-  ];
 
   const signers: Signer[] = await ethers.getSigners();
   console.log("Signer Address: ", await signers[0].getAddress());
@@ -67,7 +57,7 @@ async function main(): Promise<void> {
   // is initialized:
   console.log("Is Contract Initialized: ", await nft.isInitialized());
   // Initialize the NFT
-  await nft.initialize(baseURI, maxTokenCount, vault.address, uriSigner, solos.address, paymentSteps, timelock.address);
+  await nft.initialize(baseURI, maxTokenCount, vault.address, uriSigner, solos.address, timelock.address);
   console.log("Is Contract Initialized: ", await nft.isInitialized());
 }
 

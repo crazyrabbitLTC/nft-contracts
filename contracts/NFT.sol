@@ -27,13 +27,9 @@ contract NFT is ERC721, Ownable, ReentrancyGuard {
     bool public isInitialized = false;
 
     uint256 public maxTokenCount;
-    uint256 public constant baseTokenPerMint = 2000 ether;
-    uint256 public constant baseTokenPerUri = 4000 ether;
+    uint256 public constant baseSolosPerUri = 4000 ether;
 
-    uint256[] public paymentSteps;
-    uint256 public currentStep = 0;
-
-    IERC20 public voteToken;
+    IERC20 public solos;
 
     struct MINTER {
         address minter;
@@ -54,6 +50,7 @@ contract NFT is ERC721, Ownable, ReentrancyGuard {
     event ArtistAdded(address artist);
     event ArtistRemoved(address artist);
     event Purchase(address recipient, uint256 value, uint256 token);
+    event SolosReleased(address recipient, uint256 value);
 
     constructor() ERC721("SOLOS", "SOLOS") Ownable() {}
 
@@ -80,17 +77,21 @@ contract NFT is ERC721, Ownable, ReentrancyGuard {
         _;
     }
 
+    modifier onlyTimelock() {
+        require(msg.sender == timelock, "Error: caller is not timelock");
+        _;
+    }
+
     function initialize(
         string memory baseURI,
         uint256 _maxTokenCount, // the maximum number of tokens that can be minted
         address payable _vault,
         address _uriSigner,
-        IERC20 _voteToken,
-        uint256[] memory _paymentSteps,
+        IERC20 _solos,
         address _timelock
     ) public onlyOwner onlyInitializeOnce {
         // Vote Token
-        voteToken = _voteToken;
+        solos = _solos;
 
         // Set the base uri
         _setBaseURI(baseURI);
@@ -106,9 +107,6 @@ contract NFT is ERC721, Ownable, ReentrancyGuard {
         // Set the vault
         vault = _vault;
 
-        // Set payment steps
-        paymentSteps = _paymentSteps;
-
         // Address of the timelock
         timelock = _timelock;
     }
@@ -118,12 +116,6 @@ contract NFT is ERC721, Ownable, ReentrancyGuard {
      */
     function mint() public payable isMintable paymentRequired returns (uint256) {
         uint256 tokenId = _mintToken(msg.sender);
-
-        // Transfer a VoteToken to the user
-        voteToken.transfer(msg.sender, baseTokenPerMint);
-
-        // Transfer VoteToken to the timelock
-        voteToken.transfer(timelock, baseTokenPerMint);
 
         return tokenId;
     }
@@ -203,10 +195,12 @@ contract NFT is ERC721, Ownable, ReentrancyGuard {
         permanentURIArweave[tokenId] = arweaveHash;
         permanentURIIpfs[tokenId] = ipfsHash;
 
-        // TODO: Update the token URI
+        // TODO: update the URI on the underlying contract
+        // _setTokenURI(tokenId, arweaveHash);
+        // I am not convinced its safe to update the actual URI
 
-        // Give users tokens for this
-        voteToken.transfer(msg.sender, baseTokenPerUri);
+        // Give users community Solos for this
+        solos.transfer(msg.sender, baseSolosPerUri);
 
         // Make the Data permanently availible
         emit PermanentURIAdded(tokenId, arweaveHash, ipfsHash);
@@ -226,6 +220,22 @@ contract NFT is ERC721, Ownable, ReentrancyGuard {
         activeArtist[_artist] = false;
     }
 
+    // Release solos that might be held by this contract
+    function releaseSolos(address recipient, uint256 amount) public onlyTimelock {
+        solos.transfer(recipient, amount);
+        emit SolosReleased(recipient, amount);
+    } // only timelock
+
+    // Update Base URI
+    function updateBaseURI(string memory baseURI) public onlyOwner  {
+        _setBaseURI(baseURI);
+    }
+
+    receive() external payable {
+        vault.sendValue(address(this).balance);
+        emit Payment(msg.value, msg.sender);
+    }
+
     // Signature recovery
     function _recover(bytes32 hash, bytes memory signature) public pure returns (address) {
         return hash.recover(signature);
@@ -233,10 +243,5 @@ contract NFT is ERC721, Ownable, ReentrancyGuard {
 
     function _toEthSignedMessageHash(bytes32 hash) public pure returns (bytes32) {
         return hash.toEthSignedMessageHash();
-    }
-
-    receive() external payable {
-        vault.sendValue(address(this).balance);
-        emit Payment(msg.value, msg.sender);
     }
 }
