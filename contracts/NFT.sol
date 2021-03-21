@@ -51,6 +51,7 @@ contract NFT is ERC721, Ownable, ReentrancyGuard {
     event ArtistRemoved(address artist);
     event Purchase(address recipient, uint256 value, uint256 token);
     event SolosReleased(address recipient, uint256 value);
+    event WorkCreated(address recipient, uint256 tokenId, bool customItem, string customString);
 
     constructor() ERC721("SOLOS", "SOLOS") Ownable() {}
 
@@ -115,7 +116,7 @@ contract NFT is ERC721, Ownable, ReentrancyGuard {
      * Mint Functions
      */
     function mint() public payable isMintable paymentRequired returns (uint256) {
-        uint256 tokenId = _mintToken(msg.sender);
+        uint256 tokenId = _mintToken(msg.sender, false, "");
 
         return tokenId;
     }
@@ -144,13 +145,15 @@ contract NFT is ERC721, Ownable, ReentrancyGuard {
         }
     }
 
-    function artistMint() public isMintable onlyArtist returns (uint256) {
-        // Artist does not get SoloS tokens for minting new works for free
-
-        return _mintToken(msg.sender);
+    function artistMint(string memory _customURI) public isMintable onlyArtist returns (uint256) {
+        return _mintToken(msg.sender, true, _customURI);
     }
 
-    function _mintToken(address recipient) private returns (uint256) {
+    function _mintToken(
+        address recipient,
+        bool isCustom,
+        string memory _tokenURI
+    ) private returns (uint256) {
         // Get current Item ID
         uint256 tokenId = _tokenIds.current();
 
@@ -165,6 +168,12 @@ contract NFT is ERC721, Ownable, ReentrancyGuard {
         // Increment id
         _tokenIds.increment();
 
+        if (isCustom) {
+            _setTokenURI(tokenId, _tokenURI);
+            emit WorkCreated(msg.sender, tokenId, true, _tokenURI);
+        } else {
+            emit WorkCreated(msg.sender, tokenId, false, "");
+        }
         // Return tokenId
         return tokenId;
     }
@@ -227,7 +236,7 @@ contract NFT is ERC721, Ownable, ReentrancyGuard {
     } // only timelock
 
     // Update Base URI
-    function updateBaseURI(string memory baseURI) public onlyOwner  {
+    function updateBaseURI(string memory baseURI) public onlyOwner {
         _setBaseURI(baseURI);
     }
 
