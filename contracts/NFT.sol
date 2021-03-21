@@ -7,73 +7,98 @@ import "@openzeppelin/contracts/utils/Counters.sol";
 import "@openzeppelin/contracts/cryptography/ECDSA.sol";
 import "@openzeppelin/contracts/payment/PaymentSplitter.sol";
 import "@openzeppelin/contracts/utils/Address.sol";
+import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import "@openzeppelin/contracts/math/SafeMath.sol";
+import "@openzeppelin/contracts/access/Ownable.sol";
 
-contract NFT is ERC721 {
+contract NFT is ERC721, Ownable, ReentrancyGuard {
+    using SafeMath for uint256;
     using Address for address payable;
     using ECDSA for bytes32;
     using Counters for Counters.Counter;
     Counters.Counter private _tokenIds;
 
     address payable public vault;
-    address public governor;
-    address public presaleSigner;
-    address public exclusiveOwner;
+    address public uriSigner;
+    address public timelock;
 
-    bool public hasMintingFinished;
-    bool public isGovernorEnabled;
-    bool public hasBeenBoughtOut;
+    bool public paused;
+    bool public isInitialized = false;
 
-    uint256 public presaleDelay;
-    uint256 public launchBlock;
     uint256 public maxTokenCount;
-    uint256 public basePrice;
-    uint256 public buyoutPrice;
-    uint256 public tokenPerMint;
+    uint256 public constant baseTokenPerMint = 2000 ether;
+    uint256 public constant baseTokenPerUri = 4000 ether;
+
+    uint256[] public paymentSteps;
+    uint256 public currentStep = 0;
 
     IERC20 public voteToken;
 
-    mapping(bytes32 => bool) public hasCouponBeenUsed;
-    mapping(uint256 => string) public permanentURI;
+    struct MINTER {
+        address minter;
+        uint256 tokenId;
+        uint256 timestamp;
+    }
+
+    mapping(uint256 => MINTER) public minterLog;
+    mapping(uint256 => string) public permanentURIIpfs;
+    mapping(uint256 => string) public permanentURIArweave;
+
+    mapping(address => bool) public activeArtist;
+    mapping(uint256 => bool) public tokenURIClaimed;
 
     // Events
-    event EditionLimitSet(uint256 limit);
-    event Fossilized(uint256 tokenId, string hash);
+    event PermanentURIAdded(uint256 tokenId, string arweaveHash, string ipfsHash);
+    event Payment(uint256 amount, address payer);
+    event ArtistAdded(address artist);
+    event ArtistRemoved(address artist);
+    event Purchase(address recipient, uint256 value, uint256 token);
 
-    constructor(
+    constructor() ERC721("SOLOS", "SOLOS") Ownable() {}
+
+    modifier paymentRequired() {
+        require(msg.value >= getCurrentPrice(), "Error: Payment required, or value below price");
+        vault.sendValue(msg.value);
+        _;
+    }
+
+    modifier isMintable() {
+        require(!paused, "Error: Token minint has finished");
+        require(_tokenIds.current() <= maxTokenCount, "Error: Maximum number of tokens have been minted");
+        _;
+    }
+
+    modifier onlyArtist() {
+        require(activeArtist[msg.sender], "Error: Artist is not active");
+        _;
+    }
+
+    modifier onlyInitializeOnce() {
+        require(!isInitialized, "Error: contract is already initialized");
+        isInitialized = true;
+        _;
+    }
+
+    function initialize(
         string memory baseURI,
-        address _presaleSigner,
-        uint256 _presaleDelay, // How many blocks after the sale gone live is reserved to presales
-        uint256 _launchDelay, // How many blocks from deployment will the sale go live
         uint256 _maxTokenCount, // the maximum number of tokens that can be minted
-        uint256 _buyoutPrice,
-        address _governor,
         address payable _vault,
+        address _uriSigner,
         IERC20 _voteToken,
-        uint256 _tokenPerMint
-    ) ERC721("Solos-Saturnalia", "SSE") {
-
+        uint256[] memory _paymentSteps,
+        address _timelock
+    ) public onlyOwner onlyInitializeOnce {
         // Vote Token
         voteToken = _voteToken;
-        tokenPerMint = _tokenPerMint;
 
         // Set the base uri
         _setBaseURI(baseURI);
 
-        // Set the lauch block
-        launchBlock = block.number + _launchDelay;
-
-        // Set the presale delay
-        presaleDelay = _presaleDelay;
-
-        //Set the presale signer address
-        presaleSigner = _presaleSigner;
+        uriSigner = _uriSigner;
 
         // Set minting status
-        hasMintingFinished = false;
-
-        // Set the governor
-        governor = _governor;
+        paused = false;
 
         // Set the maximum token count
         maxTokenCount = _maxTokenCount;
@@ -81,148 +106,124 @@ contract NFT is ERC721 {
         // Set the vault
         vault = _vault;
 
-        // Set the starting Buyout Price
-        buyoutPrice = _buyoutPrice;
-    }
+        // Set payment steps
+        paymentSteps = _paymentSteps;
 
-    modifier onlyAfterPresale() {
-        require(block.number >= launchBlock + presaleDelay, "Error: Presale is still ongoing");
-        _;
-    }
-
-    modifier onlyExclusiveOwner() {
-        require(msg.sender == exclusiveOwner, "Error: call must come from exclusive owner");
-        _;
-    }
-
-    modifier paymentRequired() {
-        // require that the user sends ether for purchase
-        require(msg.value >= getCurrentPrice(), "Error: Payment required, or value below price");
-        // Transfer value to the vault
-        vault.sendValue(msg.value);
-        _;
-    }
-
-    modifier isMintable() {
-        // Require it is possible to still mint, IE: still more tokens
-        require(!hasMintingFinished, "Error: Minting has finished");
-        require(block.number >= launchBlock, "Error: sale has not yet started");
-        require(_tokenIds.current() <= maxTokenCount, "Error: Maximum number of tokens have been minted");
-        _;
-    }
-
-    modifier onlyGovernor() {
-        require(msg.sender == governor, "Error, call must come from governor");
-        require(!hasBeenBoughtOut, "Error, series has been bought out");
-        _;
+        // Address of the timelock
+        timelock = _timelock;
     }
 
     /**
      * Mint Functions
      */
-    function mint() public payable isMintable paymentRequired onlyAfterPresale returns (uint256) {
-        // mint msg.sender token
-        return _mintToken(msg.sender);
+    function mint() public payable isMintable paymentRequired returns (uint256) {
+        uint256 tokenId = _mintToken(msg.sender);
+
+        // Transfer a VoteToken to the user
+        voteToken.transfer(msg.sender, baseTokenPerMint);
+
+        // Transfer VoteToken to the timelock
+        voteToken.transfer(timelock, baseTokenPerMint);
+
+        return tokenId;
     }
 
-    function exclusiveMinter() public onlyExclusiveOwner returns (uint256) {
-        return _mintToken(msg.sender);
+    function getCurrentPrice() public view returns (uint256) {
+        return _getCurrentPrice();
     }
 
-    function presaleMint(bytes32 hash, bytes memory signature)
-        public
-        payable
-        isMintable
-        paymentRequired
-        returns (uint256)
-    {
-        // Require the presale coupon
-        require(!hasCouponBeenUsed[hash], "Error, presale coupoun has already been claimed");
-        require(presaleSigner == _recover(hash, signature), "Error: Not a valid Presale Coupon");
+    function _getCurrentPrice() internal view returns (uint256) {
+        if (totalSupply() >= 19990) {
+            return 100000000000000000000; // 16381 - 16383 100 ETH
+        } else if (totalSupply() >= 18750) {
+            return 5000000000000000000; // 16000 - 16380 5.0 ETH
+        } else if (totalSupply() >= 17500) {
+            return 3000000000000000000; // 15000  - 15999 3.0 ETH
+        } else if (totalSupply() >= 15000) {
+            return 1700000000000000000; // 11000 - 14999 1.7 ETH
+        } else if (totalSupply() >= 12500) {
+            return 900000000000000000; // 7000 - 10999 0.9 ETH
+        } else if (totalSupply() >= 10000) {
+            return 500000000000000000; // 3000 - 6999 0.5 ETH
+        } else if (totalSupply() >= 5000) {
+            return 300000000000000000; // 3000 - 6999 0.3 ETH
+        } else {
+            return 100000000000000000; // 0 - 2999 0.1 ETH
+        }
+    }
 
-        // Mark coupon as used
-        hasCouponBeenUsed[hash] = true;
+    function artistMint() public isMintable onlyArtist returns (uint256) {
+        // Artist does not get SoloS tokens for minting new works for free
 
-        // Mint msg.sender token
         return _mintToken(msg.sender);
     }
 
     function _mintToken(address recipient) private returns (uint256) {
         // Get current Item ID
-        uint256 itemId = _tokenIds.current();
+        uint256 tokenId = _tokenIds.current();
 
-        // Mint user current ItemID
-        _mint(recipient, itemId);
+        // Log who bought the token and when
+        minterLog[tokenId].minter = recipient;
+        minterLog[tokenId].tokenId = tokenId;
+        minterLog[tokenId].timestamp = block.timestamp;
+
+        // Mint user current tokenId
+        _mint(recipient, tokenId);
 
         // Increment id
         _tokenIds.increment();
 
-        // Transfer a VoteToken to the user
-        voteToken.transfer(msg.sender, 1 ether);
-
-        // Return ItemId
-        return itemId;
+        // Return tokenId
+        return tokenId;
     }
 
-    /**
-     * Change Edition Settings
-     */
-    function changeEditionLimit(uint256 limit) public onlyGovernor {
-        _changeEditionLimit(limit);
-    }
-
-    function exclusiveChangeEditionLimit(uint256 limit) public onlyExclusiveOwner {
-        _changeEditionLimit(limit);
-    }
-
-    function _changeEditionLimit(uint256 limit) private {
-        // End the mint
-        maxTokenCount = limit;
-
-        // Tell the world
-        emit EditionLimitSet(limit);
-    }
-
-    function buyout() public payable {
-        require(msg.value >= getBuyoutPrice(), "Error: Buyout price not reached");
-
-        // Set the exclusive owner
-        exclusiveOwner = msg.sender;
-
-        // Set has been bought out
-        hasBeenBoughtOut = true;
-
-        // End the mint
-        _endMinting();
-    }
-
-    function _endMinting() private {
-        // End the minting
-        hasMintingFinished = true;
-    }
-
-    function updateBaseURI(
+    function createPermanentURI(
         bytes memory signature,
+        string memory arweaveHash,
         string memory ipfsHash,
         uint256 tokenId
-    ) public {
+    ) public nonReentrant {
+        // check to be sure this tokenID has not been claimed
+        require(!tokenURIClaimed[tokenId], "Error: TokenId already claimed");
+        tokenURIClaimed[tokenId] = true;
+
+        // Give the minter a 1 week lead time to claim these tokens
+        if (msg.sender != minterLog[tokenId].minter) {
+            require(
+                block.timestamp > minterLog[tokenId].timestamp + 1 days,
+                "Error: Minters 1 day delay not yet expired"
+            );
+        }
+
         // Check the signature
-        bytes32 assetHash = keccak256(abi.encodePacked(ipfsHash, tokenId));
-        require(presaleSigner == _recover(assetHash, signature), "Error: signature did not match");
+        bytes32 assetHash = keccak256(abi.encodePacked(arweaveHash, tokenId));
+        require(uriSigner == _recover(assetHash, signature), "Error: signature did not match");
 
         // Update the token URI
-        permanentURI[tokenId] = ipfsHash;
+        permanentURIArweave[tokenId] = arweaveHash;
+        permanentURIIpfs[tokenId] = ipfsHash;
+
+        // TODO: Update the token URI
+
+        // Give users tokens for this
+        voteToken.transfer(msg.sender, baseTokenPerUri);
 
         // Make the Data permanently availible
-        emit Fossilized(tokenId, ipfsHash);
+        emit PermanentURIAdded(tokenId, arweaveHash, ipfsHash);
     }
 
-    function getCurrentPrice() public pure returns (uint256) {
-        return 0.1 ether;
+    // Pause Art
+    function pause(bool _paused) public onlyOwner {
+        paused = _paused;
     }
 
-    function getBuyoutPrice() public pure returns (uint256) {
-        return 6666 ether;
+    // Artist management
+    function addArtist(address _artist) public onlyOwner {
+        activeArtist[_artist] = true;
+    }
+
+    function removeArtist(address _artist) public onlyOwner {
+        activeArtist[_artist] = false;
     }
 
     // Signature recovery
@@ -232,5 +233,10 @@ contract NFT is ERC721 {
 
     function _toEthSignedMessageHash(bytes32 hash) public pure returns (bytes32) {
         return hash.toEthSignedMessageHash();
+    }
+
+    receive() external payable {
+        vault.sendValue(address(this).balance);
+        emit Payment(msg.value, msg.sender);
     }
 }

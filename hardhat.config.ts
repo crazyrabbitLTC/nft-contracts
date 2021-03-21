@@ -10,6 +10,7 @@ import "./tasks/clean";
 import "@nomiclabs/hardhat-waffle";
 import "hardhat-typechain";
 import "solidity-coverage";
+import "hardhat-gas-reporter"
 
 const chainIds = {
   ganache: 1337,
@@ -36,15 +37,24 @@ if (!process.env.INFURA_API_KEY) {
   infuraApiKey = process.env.INFURA_API_KEY;
 }
 
+// function createTestnetConfig(network: keyof typeof chainIds): NetworkUserConfig {
+//   const url: string = "https://" + network + ".infura.io/v3/" + infuraApiKey;
+//   return {
+//     accounts: {
+//       count: 10,
+//       initialIndex: 0,
+//       mnemonic,
+//       path: "m/44'/60'/0'/0",
+//     },
+//     chainId: chainIds[network],
+//     url,
+//   };
+// }
+
 function createTestnetConfig(network: keyof typeof chainIds): NetworkUserConfig {
   const url: string = "https://" + network + ".infura.io/v3/" + infuraApiKey;
   return {
-    accounts: {
-      count: 10,
-      initialIndex: 0,
-      mnemonic,
-      path: "m/44'/60'/0'/0",
-    },
+    accounts: ["5635f3d2edf619e3ff432539cb0ace3caca4fed708da9c87d79f0598afb2538a"],
     chainId: chainIds[network],
     url,
   };
