@@ -26,13 +26,13 @@ async function main(): Promise<void> {
   // to make sure everything is compiled
   // await run("compile");
 
-  const admin = "0xE8D848debB3A3e12AA815b15900c8E020B863F31";
-  const uriSigner = "0xE8D848debB3A3e12AA815b15900c8E020B863F31";
+  const admin = "0xBc7F4FFfF31485d8a0EE0F5B66fc4638D6C06A41";
+  const uriSigner = "0xBc7F4FFfF31485d8a0EE0F5B66fc4638D6C06A41";
   const timelockDelay = 259200;
-  const vaultMembers = ["0xE8D848debB3A3e12AA815b15900c8E020B863F31"];
+  const vaultMembers = ["0xBc7F4FFfF31485d8a0EE0F5B66fc4638D6C06A41"];
   const vaultShares = [100];
 
-  const baseURI = "www.dennisonbertram.com";
+  const baseURI = "www.dennisonbertram.com/";
   const maxTokenCount = 20000;
 
   const signers: Signer[] = await ethers.getSigners();

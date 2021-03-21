@@ -4,7 +4,6 @@ pragma solidity 0.7.4;
 
 import "@openzeppelin/contracts/token/ERC721/ERC721.sol";
 import "@openzeppelin/contracts/utils/Counters.sol";
-import "@openzeppelin/contracts/cryptography/ECDSA.sol";
 import "@openzeppelin/contracts/payment/PaymentSplitter.sol";
 import "@openzeppelin/contracts/utils/Address.sol";
 import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
@@ -15,7 +14,6 @@ import "@openzeppelin/contracts/access/Ownable.sol";
 contract NFT is ERC721, Ownable, ReentrancyGuard {
     using SafeMath for uint256;
     using Address for address payable;
-    using ECDSA for bytes32;
     using Counters for Counters.Counter;
     Counters.Counter private _tokenIds;
 
@@ -140,8 +138,12 @@ contract NFT is ERC721, Ownable, ReentrancyGuard {
             return 500000000000000000; // 3000 - 6999 0.5 ETH
         } else if (totalSupply() >= 5000) {
             return 300000000000000000; // 3000 - 6999 0.3 ETH
+        } else if (totalSupply() >= 2500) {
+            return 200000000000000000; // 2500 - 5000 0.2 ETH
+        } else if (totalSupply() >= 200) {
+            return 100000000000000000; // 201 - 2500 0.1 ETH
         } else {
-            return 100000000000000000; // 0 - 2999 0.1 ETH
+            return 0; // 0 - 200 Free ETH
         }
     }
 
@@ -188,7 +190,7 @@ contract NFT is ERC721, Ownable, ReentrancyGuard {
         require(!tokenURIClaimed[tokenId], "Error: TokenId already claimed");
         tokenURIClaimed[tokenId] = true;
 
-        // Give the minter a 1 week lead time to claim these tokens
+        // Give the minter a 1 day lead time to claim these tokens
         if (msg.sender != minterLog[tokenId].minter) {
             require(
                 block.timestamp > minterLog[tokenId].timestamp + 1 days,
@@ -197,8 +199,7 @@ contract NFT is ERC721, Ownable, ReentrancyGuard {
         }
 
         // Check the signature
-        bytes32 assetHash = keccak256(abi.encodePacked(arweaveHash, tokenId));
-        require(uriSigner == _recover(assetHash, signature), "Error: signature did not match");
+        require(isValidData(tokenId, arweaveHash, ipfsHash, signature), "Error: signature did not match");
 
         // Update the token URI
         permanentURIArweave[tokenId] = arweaveHash;
@@ -246,11 +247,47 @@ contract NFT is ERC721, Ownable, ReentrancyGuard {
     }
 
     // Signature recovery
-    function _recover(bytes32 hash, bytes memory signature) public pure returns (address) {
-        return hash.recover(signature);
+    function isValidData(
+        uint256 tokenid,
+        string memory arweave,
+        string memory ipfs,
+        bytes memory sig
+    ) internal view returns (bool) {
+        bytes32 message = keccak256(abi.encodePacked(tokenid, ipfs, arweave));
+
+        return (recoverSigner(message, sig) == uriSigner);
     }
 
-    function _toEthSignedMessageHash(bytes32 hash) public pure returns (bytes32) {
-        return hash.toEthSignedMessageHash();
+    function recoverSigner(bytes32 message, bytes memory sig) internal pure returns (address) {
+        uint8 v;
+        bytes32 r;
+        bytes32 s;
+        (v, r, s) = splitSignature(sig);
+        return ecrecover(message, v, r, s);
+    }
+
+    function splitSignature(bytes memory sig)
+        public
+        pure
+        returns (
+            uint8,
+            bytes32,
+            bytes32
+        )
+    {
+        require(sig.length == 65, "Error: Signature does not have proper length");
+        bytes32 r;
+        bytes32 s;
+        uint8 v;
+        assembly {
+            // first 32 bytes, after the length prefix
+            r := mload(add(sig, 32))
+            // second 32 bytes
+            s := mload(add(sig, 64))
+            // final byte (first byte of the next 32 bytes)
+            v := byte(0, mload(add(sig, 96)))
+        }
+
+        return (v, r, s);
     }
 }

@@ -55,7 +55,7 @@ if (!process.env.INFURA_API_KEY) {
 function createTestnetConfig(network: keyof typeof chainIds): NetworkUserConfig {
   const url: string = "https://" + network + ".infura.io/v3/" + infuraApiKey;
   return {
-    accounts: ["5635f3d2edf619e3ff432539cb0ace3caca4fed708da9c87d79f0598afb2538a"],
+    accounts: [process.env.PRIVATE_KEY_DEPLOY as string],
     chainId: chainIds[network],
     url,
   };
