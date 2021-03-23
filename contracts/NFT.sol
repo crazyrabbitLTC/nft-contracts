@@ -25,7 +25,7 @@ contract NFT is ERC721, Ownable, ReentrancyGuard {
     bool public isInitialized = false;
 
     uint256 public maxTokenCount;
-    uint256 public constant baseSolosPerUri = 4000 ether;
+    uint256 public constant baseSolosPerUri = 40 ether;
 
     IERC20 public solos;
 
