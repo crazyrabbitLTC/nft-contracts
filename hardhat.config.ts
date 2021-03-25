@@ -100,6 +100,11 @@ const config: HardhatUserConfig = {
     outDir: "typechain",
     target: "ethers-v5",
   },
+  gasReporter: {
+    currency: "USD",
+    gasPrice: 100,
+    coinmarketcap: process.env.COINMARKETCAP,
+  },
 };
 
 export default config;
