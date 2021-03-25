@@ -3,19 +3,15 @@
 pragma solidity 0.7.4;
 
 import "@openzeppelin/contracts/token/ERC721/ERC721.sol";
-import "@openzeppelin/contracts/utils/Counters.sol";
 import "@openzeppelin/contracts/payment/PaymentSplitter.sol";
 import "@openzeppelin/contracts/utils/Address.sol";
 import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-import "@openzeppelin/contracts/math/SafeMath.sol";
 import "@openzeppelin/contracts/access/Ownable.sol";
 
 contract NFT is ERC721, Ownable, ReentrancyGuard {
     using SafeMath for uint256;
     using Address for address payable;
-    using Counters for Counters.Counter;
-    Counters.Counter private _tokenIds;
 
     address payable public vault;
     address public uriSigner;
@@ -24,32 +20,23 @@ contract NFT is ERC721, Ownable, ReentrancyGuard {
     bool public paused;
     bool public isInitialized = false;
 
-    uint256 public maxTokenCount;
-    uint256 public constant baseSolosPerUri = 40 ether;
+    uint16 private _tokenCount = 0;
+    uint16 public constant maxTokenCount = 20000; // 20,000 tokens is the max
+    uint256 public constant baseSolosPerUri = 40 ether; // Save gas we will remove this and ju
 
     IERC20 public solos;
 
     struct MINTER {
         address minter;
-        uint256 tokenId;
         uint256 timestamp;
     }
 
-    mapping(uint256 => MINTER) public minterLog;
-    mapping(uint256 => string) public permanentURIIpfs;
-    mapping(uint256 => string) public permanentURIArweave;
+    mapping(uint16 => MINTER) public minterLog;
+    mapping(uint16 => string) public permanentURIArweave;
 
-    mapping(address => bool) public activeArtist;
-    mapping(uint256 => bool) public tokenURIClaimed;
 
     // Events
-    event PermanentURIAdded(uint256 tokenId, string arweaveHash, string ipfsHash);
-    event Payment(uint256 amount, address payer);
-    event ArtistAdded(address artist);
-    event ArtistRemoved(address artist);
-    event Purchase(address recipient, uint256 value, uint256 token);
-    event SolosReleased(address recipient, uint256 value);
-    event WorkCreated(address recipient, uint256 tokenId, bool customItem, string customString);
+    event PermanentURIAdded(uint256 tokenId, string arweaveHash);
 
     constructor() ERC721("SOLOS", "SOLOS") Ownable() {}
 
@@ -60,13 +47,8 @@ contract NFT is ERC721, Ownable, ReentrancyGuard {
     }
 
     modifier isMintable() {
-        require(!paused, "Error: Token minint has finished");
-        require(_tokenIds.current() <= maxTokenCount, "Error: Maximum number of tokens have been minted");
-        _;
-    }
-
-    modifier onlyArtist() {
-        require(activeArtist[msg.sender], "Error: Artist is not active");
+        require(!paused, "Error: Token minting is paused");
+        require(_tokenCount <= maxTokenCount, "Error: Maximum number of tokens have been minted");
         _;
     }
 
@@ -83,7 +65,6 @@ contract NFT is ERC721, Ownable, ReentrancyGuard {
 
     function initialize(
         string memory baseURI,
-        uint256 _maxTokenCount, // the maximum number of tokens that can be minted
         address payable _vault,
         address _uriSigner,
         IERC20 _solos,
@@ -100,9 +81,6 @@ contract NFT is ERC721, Ownable, ReentrancyGuard {
         // Set minting status
         paused = false;
 
-        // Set the maximum token count
-        maxTokenCount = _maxTokenCount;
-
         // Set the vault
         vault = _vault;
 
@@ -114,9 +92,17 @@ contract NFT is ERC721, Ownable, ReentrancyGuard {
      * Mint Functions
      */
     function mint() public payable isMintable paymentRequired returns (uint256) {
-        uint256 tokenId = _mintToken(msg.sender, false, "");
+        // Log who bought the token and when
+        minterLog[_tokenCount].minter = msg.sender;
+        minterLog[_tokenCount].timestamp = block.timestamp;
 
-        return tokenId;
+        // Mint user current tokenId
+        _mint(msg.sender, _tokenCount);
+
+        // Increment id
+        _tokenCount++;
+
+        return _tokenCount;
     }
 
     function getCurrentPrice() public view returns (uint256) {
@@ -147,73 +133,44 @@ contract NFT is ERC721, Ownable, ReentrancyGuard {
         }
     }
 
-    function artistMint(string memory _customURI) public isMintable onlyArtist returns (uint256) {
-        return _mintToken(msg.sender, true, _customURI);
-    }
-
-    function _mintToken(
-        address recipient,
-        bool isCustom,
-        string memory _tokenURI
-    ) private returns (uint256) {
-        // Get current Item ID
-        uint256 tokenId = _tokenIds.current();
-
-        // Log who bought the token and when
-        minterLog[tokenId].minter = recipient;
-        minterLog[tokenId].tokenId = tokenId;
-        minterLog[tokenId].timestamp = block.timestamp;
-
-        // Mint user current tokenId
-        _mint(recipient, tokenId);
-
-        // Increment id
-        _tokenIds.increment();
-
-        if (isCustom) {
-            _setTokenURI(tokenId, _tokenURI);
-            emit WorkCreated(msg.sender, tokenId, true, _tokenURI);
-        } else {
-            emit WorkCreated(msg.sender, tokenId, false, "");
-        }
-        // Return tokenId
-        return tokenId;
-    }
-
     function createPermanentURI(
         bytes memory signature,
         string memory arweaveHash,
-        string memory ipfsHash,
-        uint256 tokenId
+        uint16 tokenId
     ) public nonReentrant {
-        // check to be sure this tokenID has not been claimed
-        require(!tokenURIClaimed[tokenId], "Error: TokenId already claimed");
-        tokenURIClaimed[tokenId] = true;
+        // Note on Underlow for TokenID
+        // This does not seem to be a danger, because we WANT tokens to be claimed. Only the onwer can claim in 24 hours, so it's fine if a underflow happens.
+        // in any case that should not pass the signature check.
 
-        // Give the minter a 1 day lead time to claim these tokens
+
+        // check to be sure this tokenID has not been claimed
+        require(
+            keccak256(abi.encodePacked(permanentURIArweave[tokenId])) == keccak256(abi.encodePacked("")),
+            "Error: TokenId already claimed"
+        );
+
+        // Check to make sure this tokenID is inbounds:
+        require(tokenId <= maxTokenCount, "Error: Maximum number of tokens have been minted");
+
+        // Give the minter a 3 day lead time to claim these tokens
         if (msg.sender != minterLog[tokenId].minter) {
             require(
-                block.timestamp > minterLog[tokenId].timestamp + 1 days,
+                block.timestamp > minterLog[tokenId].timestamp + 3 days,
                 "Error: Minters 1 day delay not yet expired"
             );
         }
 
         // Check the signature
-        require(isValidData(tokenId, arweaveHash, ipfsHash, signature), "Error: signature did not match");
+        require(_isValidData(tokenId, arweaveHash, signature), "Error: signature did not match");
 
         // Update the token URI
         permanentURIArweave[tokenId] = arweaveHash;
-        permanentURIIpfs[tokenId] = ipfsHash;
-
-        // TODO: update the URI on the underlying contract
-        // _setTokenURI(tokenId, arweaveHash);
-        // I am not convinced its safe to update the actual URI
 
         // Give users community Solos for this
         solos.transfer(msg.sender, baseSolosPerUri);
 
         // Make the Data permanently availible
-        emit PermanentURIAdded(tokenId, arweaveHash, ipfsHash);
+        emit PermanentURIAdded(tokenId, arweaveHash);
     }
 
     // Pause Art
@@ -221,19 +178,10 @@ contract NFT is ERC721, Ownable, ReentrancyGuard {
         paused = _paused;
     }
 
-    // Artist management
-    function addArtist(address _artist) public onlyOwner {
-        activeArtist[_artist] = true;
-    }
-
-    function removeArtist(address _artist) public onlyOwner {
-        activeArtist[_artist] = false;
-    }
 
     // Release solos that might be held by this contract
     function releaseSolos(address recipient, uint256 amount) public onlyTimelock {
         solos.transfer(recipient, amount);
-        emit SolosReleased(recipient, amount);
     } // only timelock
 
     // Update Base URI
@@ -241,19 +189,13 @@ contract NFT is ERC721, Ownable, ReentrancyGuard {
         _setBaseURI(baseURI);
     }
 
-    receive() external payable {
-        vault.sendValue(address(this).balance);
-        emit Payment(msg.value, msg.sender);
-    }
-
     // Signature recovery
-    function isValidData(
-        uint256 tokenid,
+    function _isValidData(
+        uint16 tokenid,
         string memory arweave,
-        string memory ipfs,
         bytes memory sig
     ) internal view returns (bool) {
-        bytes32 message = keccak256(abi.encodePacked(tokenid, ipfs, arweave));
+        bytes32 message = keccak256(abi.encodePacked(tokenid, arweave));
 
         return (recoverSigner(message, sig) == uriSigner);
     }
